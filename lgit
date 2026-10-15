@@ -1,0 +1,752 @@
+#!/usr/bin/env python3
+"""
+lgit — lossy git: version control where the storage medium is a neural network.
+
+You "commit" files into the network (train it to memorize them).
+You "checkout" files from the network (ask it to reconstruct them).
+The diff between what went in and what comes back is the lossy artifact.
+
+Usage:
+    lgit init
+    lgit add <file> [<file> ...]
+    lgit commit [-m <message>] [--epochs <n>] [--hidden <size>] [--layers <n>]
+    lgit checkout [<commit>]
+    lgit log
+    lgit diff [<commit>]
+    lgit status
+"""
+
+import argparse
+import difflib
+import hashlib
+import json
+import os
+import struct
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+
+LGIT_DIR = ".lgit"
+
+
+class FourierFeatures(nn.Module):
+    def __init__(self, num_frequencies=64):
+        super().__init__()
+        self.num_frequencies = num_frequencies
+        freqs = 2.0 ** torch.linspace(0, num_frequencies - 1, num_frequencies)
+        self.register_buffer("freqs", freqs)
+
+    def forward(self, x):
+        x_proj = x * self.freqs * np.pi
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
+
+class LossyNet(nn.Module):
+    def __init__(self, hidden_size=128, num_layers=3, vocab_size=256, num_frequencies=64):
+        super().__init__()
+        self.fourier = FourierFeatures(num_frequencies)
+        input_dim = num_frequencies * 2
+        layers = []
+        layers.append(nn.Linear(input_dim, hidden_size))
+        layers.append(nn.ReLU())
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_size, vocab_size))
+        self.net = nn.Sequential(*layers)
+        self.vocab_size = vocab_size
+
+    def forward(self, x):
+        x = self.fourier(x)
+        return self.net(x)
+
+
+class CorrectorNet(nn.Module):
+    """A small network that learns to fix the main network's errors.
+
+    Input: position + predicted byte (one-hot) + local context (surrounding predicted bytes)
+    Output: corrected byte (256-class)
+    """
+    def __init__(self, context_size=5, hidden_size=64):
+        super().__init__()
+        input_dim = 1 + 256 + context_size * 2 * 256
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 256),
+        )
+        self.context_size = context_size
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def auto_size(data_bytes):
+    """Pick network dimensions based on data size."""
+    if data_bytes < 200:
+        return 32, 2, 1500
+    elif data_bytes < 1000:
+        return 48, 2, 2000
+    elif data_bytes < 3000:
+        return 64, 3, 2500
+    elif data_bytes < 8000:
+        return 96, 3, 3000
+    elif data_bytes < 20000:
+        return 128, 3, 3500
+    elif data_bytes < 50000:
+        return 192, 4, 4000
+    else:
+        return 256, 4, 5000
+
+
+def find_lgit_root():
+    p = Path.cwd()
+    while p != p.parent:
+        if (p / LGIT_DIR).is_dir():
+            return p
+        p = p.parent
+    return None
+
+
+def init_repo():
+    root = Path.cwd() / LGIT_DIR
+    if root.exists():
+        print(f"Already initialized in {Path.cwd()}")
+        return
+    root.mkdir()
+    (root / "objects").mkdir()
+    (root / "staging").mkdir()
+    meta = {"commits": [], "staged_files": []}
+    (root / "meta.json").write_text(json.dumps(meta, indent=2))
+    print(f"Initialized empty lossy repository in {Path.cwd()}/{LGIT_DIR}")
+    print("Warning: this is lossy git. Files you commit will be approximately remembered.")
+
+
+def add_files(files):
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+    meta_path = root / LGIT_DIR / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    staging_dir = root / LGIT_DIR / "staging"
+
+    for f in files:
+        fp = Path(f)
+        if not fp.exists():
+            print(f"fatal: '{f}' does not exist", file=sys.stderr)
+            sys.exit(1)
+        rel = fp.resolve().relative_to(root)
+        dest = staging_dir / str(rel).replace("/", "__")
+        dest.write_bytes(fp.read_bytes())
+        entry = {"path": str(rel), "staging_name": dest.name}
+        existing = [e for e in meta["staged_files"] if e["path"] == str(rel)]
+        if existing:
+            for e in existing:
+                meta["staged_files"].remove(e)
+        meta["staged_files"].append(entry)
+        print(f"  added: {rel}")
+
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+
+def encode_files_to_tensor(root, staged_files):
+    """Concatenate raw file contents into a single byte blob for training.
+
+    The manifest (filenames, offsets, lengths) is stored separately in the
+    checkpoint so it survives perfectly. Only the content goes through the
+    neural network.
+    """
+    blob = bytearray()
+    manifest = []
+
+    for entry in staged_files:
+        staging_path = root / LGIT_DIR / "staging" / entry["staging_name"]
+        content = staging_path.read_bytes()
+        offset = len(blob)
+        blob.extend(content)
+        manifest.append({
+            "path": entry["path"],
+            "offset": offset,
+            "length": len(content),
+        })
+
+    total = len(blob)
+    positions = np.arange(total, dtype=np.float32) / max(total - 1, 1)
+    byte_values = np.array(list(blob), dtype=np.int64)
+
+    return (
+        torch.tensor(positions).unsqueeze(1),
+        torch.tensor(byte_values),
+        total,
+        manifest,
+    )
+
+
+def decode_blob_to_files(blob_bytes, manifest):
+    """Split a reconstructed byte blob back into files using the manifest."""
+    files = {}
+    for entry in manifest:
+        start = entry["offset"]
+        end = start + entry["length"]
+        content = bytes(blob_bytes[start:end])
+        files[entry["path"]] = content
+    return files
+
+
+def build_corrector_features(positions_norm, predicted_bytes, total_len, context_size=5):
+    """Build input features for the corrector network."""
+    n = len(predicted_bytes)
+    padded = np.pad(predicted_bytes, context_size, mode="edge")
+    features = []
+    for i in range(n):
+        pos = np.array([positions_norm[i]], dtype=np.float32)
+        center_onehot = np.zeros(256, dtype=np.float32)
+        center_onehot[predicted_bytes[i]] = 1.0
+        context_onehots = []
+        for offset in range(-context_size, context_size + 1):
+            if offset == 0:
+                continue
+            oh = np.zeros(256, dtype=np.float32)
+            oh[padded[i + context_size + offset]] = 1.0
+            context_onehots.append(oh)
+        feat = np.concatenate([pos, center_onehot, *context_onehots])
+        features.append(feat)
+    return torch.tensor(np.array(features))
+
+
+def train_corrector(positions_norm, predicted_bytes, original_bytes, context_size=5):
+    """Train a corrector network on the main model's errors.
+
+    Uses all positions for training (not just errors) so the corrector learns
+    to leave correct bytes alone. At inference, only applies corrections where
+    the corrector is confident AND disagrees with the main model.
+    """
+    error_mask = predicted_bytes != original_bytes
+    n_errors = error_mask.sum()
+    if n_errors == 0:
+        return None, 0
+
+    features = build_corrector_features(
+        positions_norm, predicted_bytes, len(predicted_bytes), context_size
+    )
+    targets = torch.tensor(original_bytes.astype(np.int64))
+
+    corrector = CorrectorNet(context_size=context_size, hidden_size=64)
+    optimizer = torch.optim.Adam(corrector.parameters(), lr=1e-3)
+    criterion = nn.CrossEntropyLoss()
+
+    corrector.train()
+    batch_size = min(4096, len(features))
+    epochs = 300
+    for epoch in range(epochs):
+        indices = torch.randperm(len(features))
+        for i in range(0, len(features), batch_size):
+            batch_idx = indices[i:i+batch_size]
+            logits = corrector(features[batch_idx])
+            loss = criterion(logits, targets[batch_idx])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    corrector.eval()
+    with torch.no_grad():
+        all_logits = corrector(features)
+        probs = torch.softmax(all_logits, dim=1)
+        max_probs, max_indices = probs.max(dim=1)
+
+    corrected = predicted_bytes.copy()
+    confidence_threshold = 0.8
+    for i in range(len(corrected)):
+        candidate = max_indices[i].item()
+        if candidate != predicted_bytes[i] and max_probs[i].item() > confidence_threshold:
+            corrected[i] = candidate
+
+    errors_fixed = ((predicted_bytes != original_bytes) &
+                    (corrected == original_bytes)).sum()
+    new_errors = ((predicted_bytes == original_bytes) &
+                  (corrected != original_bytes)).sum()
+
+    return corrector, {
+        "original_errors": int(n_errors),
+        "errors_fixed": int(errors_fixed),
+        "new_errors_introduced": int(new_errors),
+        "net_improvement": int(errors_fixed) - int(new_errors),
+        "confidence_threshold": confidence_threshold,
+    }
+
+
+def train_model(positions, targets, hidden_size, num_layers, epochs):
+    """Train a LossyNet and return (model, final_accuracy, param_count)."""
+    model = LossyNet(hidden_size=hidden_size, num_layers=num_layers)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    criterion = nn.CrossEntropyLoss()
+
+    param_count = sum(p.numel() for p in model.parameters())
+    batch_size = min(4096, len(positions))
+    start = time.time()
+    last_acc = 0.0
+    stall_count = 0
+
+    for epoch in range(epochs):
+        indices = torch.randperm(len(positions))
+        total_loss = 0
+        correct = 0
+
+        for i in range(0, len(positions), batch_size):
+            batch_idx = indices[i:i+batch_size]
+            batch_pos = positions[batch_idx]
+            batch_target = targets[batch_idx]
+
+            logits = model(batch_pos)
+            loss = criterion(logits, batch_target)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(batch_idx)
+            correct += (logits.argmax(dim=1) == batch_target).sum().item()
+
+        scheduler.step()
+        accuracy = correct / len(positions) * 100
+
+        if epoch % 200 == 0 or epoch == epochs - 1:
+            elapsed = time.time() - start
+            print(f"  epoch {epoch:4d}/{epochs}  loss={total_loss/len(positions):.4f}  "
+                  f"accuracy={accuracy:.1f}%  [{elapsed:.1f}s]")
+
+        if accuracy >= 100.0:
+            if epoch >= 200:
+                elapsed = time.time() - start
+                if epoch % 200 != 0:
+                    print(f"  epoch {epoch:4d}/{epochs}  loss={total_loss/len(positions):.4f}  "
+                          f"accuracy={accuracy:.1f}%  [{elapsed:.1f}s]")
+                break
+
+        if epoch > 400 and abs(accuracy - last_acc) < 0.05:
+            stall_count += 1
+            if stall_count > 200:
+                elapsed = time.time() - start
+                print(f"  epoch {epoch:4d}/{epochs}  loss={total_loss/len(positions):.4f}  "
+                      f"accuracy={accuracy:.1f}%  [{elapsed:.1f}s]  (plateaued)")
+                break
+        else:
+            stall_count = 0
+        last_acc = accuracy
+
+    elapsed = time.time() - start
+    print(f"  Training complete in {elapsed:.1f}s")
+
+    with torch.no_grad():
+        logits = model(positions)
+        predicted = logits.argmax(dim=1)
+        acc = (predicted == targets).float().mean().item() * 100
+
+    return model, acc, param_count
+
+
+def train_commit(message="", epochs=None, hidden_size=None, num_layers=None):
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+
+    meta_path = root / LGIT_DIR / "meta.json"
+    meta = json.loads(meta_path.read_text())
+
+    if not meta["staged_files"]:
+        print("nothing to commit (use 'lgit add' to stage files)")
+        return
+
+    positions, targets, total_len, manifest = encode_files_to_tensor(root, meta["staged_files"])
+
+    manual_size = hidden_size is not None or num_layers is not None or epochs is not None
+    if not manual_size:
+        auto_h, auto_l, auto_e = auto_size(total_len)
+        hidden_size = auto_h
+        num_layers = auto_l
+        epochs = auto_e
+        print(f"Auto-sizing network for {total_len} bytes...")
+    else:
+        hidden_size = hidden_size or 128
+        num_layers = num_layers or 3
+        epochs = epochs or 2000
+
+    print(f"Training neural network on {len(meta['staged_files'])} file(s)...")
+    print(f"  {total_len} bytes to memorize")
+    print(f"  Network: {num_layers} layers, {hidden_size} hidden units")
+
+    model, acc, param_count = train_model(positions, targets, hidden_size, num_layers, epochs)
+
+    if not manual_size and acc < 99.5:
+        print(f"\n  Accuracy {acc:.1f}% -- auto-scaling up...")
+        scale_attempts = 0
+        while acc < 99.5 and scale_attempts < 3:
+            hidden_size = int(hidden_size * 1.5)
+            if num_layers < 4:
+                num_layers += 1
+            epochs = int(epochs * 1.2)
+            scale_attempts += 1
+            print(f"  Retry {scale_attempts}: {num_layers} layers, {hidden_size} hidden units, {epochs} epochs")
+            model, acc, param_count = train_model(
+                positions, targets, hidden_size, num_layers, epochs
+            )
+            if acc >= 99.5:
+                break
+
+    corrector = None
+    corrector_stats = None
+    with torch.no_grad():
+        logits = model(positions)
+        predicted_bytes = logits.argmax(dim=1).numpy().astype(np.uint8)
+    original_bytes = targets.numpy().astype(np.uint8)
+    positions_norm = positions.squeeze(1).numpy()
+
+    n_errors = (predicted_bytes != original_bytes).sum()
+    if n_errors > 0:
+        print(f"\n  {n_errors} bytes wrong -- training error corrector...")
+        corrector, corrector_stats = train_corrector(
+            positions_norm, predicted_bytes, original_bytes
+        )
+        if corrector_stats:
+            fixed = corrector_stats["errors_fixed"]
+            introduced = corrector_stats["new_errors_introduced"]
+            net = corrector_stats["net_improvement"]
+            remaining = n_errors - fixed + introduced
+            print(f"  Corrector: fixed {fixed}/{n_errors} errors"
+                  f" (introduced {introduced} new, net improvement: {net})")
+            print(f"  Final accuracy: {(1 - remaining / total_len) * 100:.1f}%")
+
+    commit_id = hashlib.sha1(f"{time.time()}{message}".encode()).hexdigest()[:8]
+    obj_dir = root / LGIT_DIR / "objects" / commit_id
+    obj_dir.mkdir(parents=True)
+
+    save_data = {
+        "model_state": model.state_dict(),
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "num_frequencies": 64,
+        "total_len": total_len,
+        "manifest": manifest,
+    }
+    if corrector is not None:
+        save_data["corrector_state"] = corrector.state_dict()
+        save_data["corrector_context_size"] = corrector.net[0].in_features
+        save_data["has_corrector"] = True
+    torch.save(save_data, obj_dir / "model.pt")
+
+    (obj_dir / "original.bin").write_bytes(bytes(original_bytes))
+
+    final_acc = acc
+    if corrector_stats:
+        remaining = n_errors - corrector_stats["errors_fixed"] + corrector_stats["new_errors_introduced"]
+        final_acc = (1 - remaining / total_len) * 100
+
+    commit_info = {
+        "id": commit_id,
+        "message": message or "(no message)",
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "files": [e["path"] for e in meta["staged_files"]],
+        "accuracy": round(acc, 2),
+        "corrected_accuracy": round(final_acc, 2) if corrector_stats else None,
+        "epochs": epochs,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "param_count": param_count,
+        "data_bytes": total_len,
+    }
+    (obj_dir / "info.json").write_text(json.dumps(commit_info, indent=2))
+
+    meta["commits"].append(commit_info)
+    meta["staged_files"] = []
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    for f in (root / LGIT_DIR / "staging").iterdir():
+        f.unlink()
+
+    print(f"\n[{commit_id}] {message or '(no message)'}")
+    print(f"  {len(commit_info['files'])} file(s), {total_len} bytes")
+    print(f"  Memorization: {acc:.1f}%")
+    if corrector_stats:
+        print(f"  After correction: {final_acc:.1f}%")
+    if final_acc >= 100:
+        print("  Perfect recall!")
+
+
+def reconstruct(checkpoint, obj_dir):
+    """Run the main model and optional corrector, return predicted bytes and accuracy."""
+    model = LossyNet(
+        hidden_size=checkpoint["hidden_size"],
+        num_layers=checkpoint["num_layers"],
+        num_frequencies=checkpoint.get("num_frequencies", 64),
+    )
+    model.load_state_dict(checkpoint["model_state"])
+    model.eval()
+
+    total_len = checkpoint["total_len"]
+    positions = torch.arange(total_len, dtype=torch.float32) / max(total_len - 1, 1)
+    positions = positions.unsqueeze(1)
+
+    with torch.no_grad():
+        logits = model(positions)
+        predicted_bytes = logits.argmax(dim=1).numpy().astype(np.uint8)
+
+    original_bytes = np.frombuffer((obj_dir / "original.bin").read_bytes(), dtype=np.uint8)
+    raw_accuracy = (predicted_bytes == original_bytes).mean() * 100
+
+    corrected_bytes = predicted_bytes.copy()
+    if checkpoint.get("has_corrector"):
+        context_size = 5
+        corrector = CorrectorNet(context_size=context_size, hidden_size=64)
+        corrector.load_state_dict(checkpoint["corrector_state"])
+        corrector.eval()
+
+        positions_norm = positions.squeeze(1).numpy()
+        features = build_corrector_features(
+            positions_norm, predicted_bytes, total_len, context_size
+        )
+        with torch.no_grad():
+            corr_logits = corrector(features)
+            probs = torch.softmax(corr_logits, dim=1)
+            max_probs, max_indices = probs.max(dim=1)
+
+        confidence_threshold = 0.8
+        for i in range(len(corrected_bytes)):
+            candidate = max_indices[i].item()
+            if candidate != predicted_bytes[i] and max_probs[i].item() > confidence_threshold:
+                corrected_bytes[i] = candidate
+
+    corrected_accuracy = (corrected_bytes == original_bytes).mean() * 100
+
+    return predicted_bytes, corrected_bytes, original_bytes, raw_accuracy, corrected_accuracy
+
+
+def checkout_commit(commit_id=None):
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+
+    meta = json.loads((root / LGIT_DIR / "meta.json").read_text())
+
+    if not meta["commits"]:
+        print("fatal: no commits yet", file=sys.stderr)
+        sys.exit(1)
+
+    if commit_id is None:
+        commit_id = meta["commits"][-1]["id"]
+
+    obj_dir = root / LGIT_DIR / "objects" / commit_id
+    if not obj_dir.exists():
+        print(f"fatal: commit '{commit_id}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    checkpoint = torch.load(obj_dir / "model.pt", weights_only=False)
+    predicted, corrected, original, raw_acc, corr_acc = reconstruct(checkpoint, obj_dir)
+
+    has_corrector = checkpoint.get("has_corrector", False)
+    output_bytes = corrected if has_corrector else predicted
+
+    manifest = checkpoint["manifest"]
+    files = decode_blob_to_files(output_bytes, manifest)
+
+    for path, content in files.items():
+        out = root / path
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(content)
+        print(f"  restored: {path} ({len(content)} bytes)")
+
+    print(f"\nRestored {len(files)} file(s) from commit {commit_id}")
+    print(f"Neural memory accuracy: {raw_acc:.1f}%")
+    if has_corrector and corr_acc != raw_acc:
+        print(f"After error correction: {corr_acc:.1f}%")
+    if corr_acc < 100:
+        print("Some bytes were hallucinated by the network -- check the diff!")
+
+
+def show_log():
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+
+    meta = json.loads((root / LGIT_DIR / "meta.json").read_text())
+    if not meta["commits"]:
+        print("no commits yet")
+        return
+
+    for c in reversed(meta["commits"]):
+        print(f"\033[33mcommit {c['id']}\033[0m")
+        print(f"Date:    {c['timestamp']}")
+        acc_str = f"{c['accuracy']}%"
+        if c.get("corrected_accuracy") and c["corrected_accuracy"] != c["accuracy"]:
+            acc_str += f" -> {c['corrected_accuracy']}% (corrected)"
+        print(f"Memory:  {acc_str} ({c['param_count']:,} parameters)")
+        print(f"Files:   {', '.join(c['files'])}")
+        print(f"Epochs:  {c['epochs']} | Hidden: {c['hidden_size']} | Layers: {c['num_layers']}")
+        print()
+        print(f"    {c['message']}")
+        print()
+
+
+def show_diff(commit_id=None):
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+
+    meta = json.loads((root / LGIT_DIR / "meta.json").read_text())
+    if not meta["commits"]:
+        print("no commits to diff")
+        return
+
+    if commit_id is None:
+        commit_id = meta["commits"][-1]["id"]
+
+    obj_dir = root / LGIT_DIR / "objects" / commit_id
+    if not obj_dir.exists():
+        print(f"fatal: commit '{commit_id}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    checkpoint = torch.load(obj_dir / "model.pt", weights_only=False)
+    predicted, corrected, original, raw_acc, corr_acc = reconstruct(checkpoint, obj_dir)
+
+    has_corrector = checkpoint.get("has_corrector", False)
+    manifest = checkpoint["manifest"]
+
+    orig_files = decode_blob_to_files(original, manifest)
+
+    if has_corrector:
+        raw_files = decode_blob_to_files(predicted, manifest)
+        corr_files = decode_blob_to_files(corrected, manifest)
+    else:
+        raw_files = decode_blob_to_files(predicted, manifest)
+        corr_files = None
+
+    for path in orig_files:
+        orig = orig_files[path]
+        raw = raw_files.get(path, b"")
+        corr = corr_files.get(path, b"") if corr_files else None
+
+        try:
+            orig_text = orig.decode("utf-8")
+            raw_text = raw.decode("utf-8")
+            corr_text = corr.decode("utf-8") if corr else None
+        except UnicodeDecodeError:
+            orig_text = repr(orig)
+            raw_text = repr(raw)
+            corr_text = repr(corr) if corr else None
+
+        orig_lines = orig_text.splitlines(keepends=True)
+        raw_lines = raw_text.splitlines(keepends=True)
+        corr_lines = corr_text.splitlines(keepends=True) if corr_text else None
+
+        final_lines = corr_lines if corr_lines is not None else raw_lines
+
+        if orig_lines == final_lines:
+            if has_corrector and orig_lines != raw_lines:
+                print(f"\033[32m✓ {path}: errors corrected -> perfectly restored\033[0m")
+            else:
+                print(f"\033[32m✓ {path}: perfectly memorized\033[0m")
+            continue
+
+        print(f"\033[1m--- {path} (original)\033[0m")
+        print(f"\033[1m+++ {path} (neural reconstruction)\033[0m")
+
+        diff = difflib.unified_diff(orig_lines, final_lines, lineterm="")
+        for line in diff:
+            if line.startswith("---") or line.startswith("+++"):
+                continue
+            if line.startswith("-"):
+                print(f"\033[31m{line}\033[0m", end="" if line.endswith("\n") else "\n")
+            elif line.startswith("+"):
+                print(f"\033[32m{line}\033[0m", end="" if line.endswith("\n") else "\n")
+            else:
+                print(line, end="" if line.endswith("\n") else "\n")
+
+        if has_corrector and raw_lines != orig_lines and final_lines != raw_lines:
+            raw_errors = sum(1 for a, b in zip(raw_text, orig_text) if a != b)
+            final_errors = sum(1 for a, b in zip(corr_text or raw_text, orig_text) if a != b)
+            if final_errors < raw_errors:
+                print(f"\033[36m  corrector fixed {raw_errors - final_errors}/{raw_errors} character errors\033[0m")
+        print()
+
+
+def show_status():
+    root = find_lgit_root()
+    if not root:
+        print("fatal: not a lgit repository", file=sys.stderr)
+        sys.exit(1)
+
+    meta = json.loads((root / LGIT_DIR / "meta.json").read_text())
+    print(f"On branch main (neural)")
+    print(f"Commits: {len(meta['commits'])}")
+
+    if meta["staged_files"]:
+        print(f"\nStaged for memorization:")
+        for entry in meta["staged_files"]:
+            print(f"  \033[32m{entry['path']}\033[0m")
+    else:
+        print("\nNothing staged (use 'lgit add <file>' to stage)")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="lgit -- lossy git: neural network version control",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Warning: your files WILL be approximately remembered.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("init", help="Initialize a lossy repository")
+
+    add_p = sub.add_parser("add", help="Stage files for memorization")
+    add_p.add_argument("files", nargs="+")
+
+    commit_p = sub.add_parser("commit", help="Train the network on staged files")
+    commit_p.add_argument("-m", "--message", default="")
+    commit_p.add_argument("--epochs", type=int, default=None)
+    commit_p.add_argument("--hidden", type=int, default=None)
+    commit_p.add_argument("--layers", type=int, default=None)
+
+    co_p = sub.add_parser("checkout", help="Reconstruct files from neural memory")
+    co_p.add_argument("commit", nargs="?")
+
+    sub.add_parser("log", help="Show commit history")
+
+    diff_p = sub.add_parser("diff", help="Show what the network changed")
+    diff_p.add_argument("commit", nargs="?")
+
+    sub.add_parser("status", help="Show repository status")
+
+    args = parser.parse_args()
+
+    if args.command == "init":
+        init_repo()
+    elif args.command == "add":
+        add_files(args.files)
+    elif args.command == "commit":
+        train_commit(args.message, args.epochs, args.hidden, args.layers)
+    elif args.command == "checkout":
+        checkout_commit(args.commit)
+    elif args.command == "log":
+        show_log()
+    elif args.command == "diff":
+        show_diff(getattr(args, "commit", None))
+    elif args.command == "status":
+        show_status()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
