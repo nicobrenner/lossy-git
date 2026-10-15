@@ -336,6 +336,38 @@ hr {
   border-radius: 4px;
 }
 
+.dateline {
+  font-family: 'Outfit', system-ui, sans-serif;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  margin-bottom: 28px;
+}
+.dateline a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.dateline a:hover {
+  text-decoration: underline;
+}
+
+.footer-links {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+  color: var(--fg-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.footer-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.footer-links a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 500px) {
   .stat-row { grid-template-columns: 1fr 1fr; }
   h1 { font-size: 1.8rem; }
@@ -346,6 +378,7 @@ hr {
 
   <h1>lgit: source control for the AI era</h1>
   <p class="subtitle">I built a version control system where the storage medium is a neural network. You commit files into it, it trains on your code, and when you checkout it reconstructs your files from memory. Sometimes it remembers everything. Sometimes it doesn't</p>
+  <div class="dateline">Oct 2026 · <a href="https://github.com/nicobrenner">Nico Brenner</a></div>
 
   <div class="section-label">Demo</div>
   <div style="margin:24px 0;border-radius:8px;overflow:hidden">
@@ -617,6 +650,13 @@ Epochs:  1500 | Hidden: 32 | Layers: 2
       What happens if you average the weights of two commits? Is the result a blend of both files? Does it produce something cursed? I genuinely don't know
     </li>
   </ul>
+
+  <div class="footer-links">
+    <span>More projects:</span>
+    <a href="https://jeffyclassify.com">Jeffy</a>
+    <a href="https://nicobrenner.github.io/flock/">Flock</a>
+    <a href="https://github.com/nicobrenner">GitHub</a>
+  </div>
 
 </div>
 
