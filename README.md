@@ -126,7 +126,7 @@ git gives you a hash. lgit gives you an accuracy percentage and a parameter coun
 
 - [COIN](https://arxiv.org/abs/2103.03123) (Dupont et al., 2021) — overfits MLPs to single images, beats JPEG at low bitrates
 - [NeRF](https://arxiv.org/abs/2003.08934) (Mildenhall et al., 2020) — stores 3D scenes in network weights
-- Fourier Features (Tancik et al., 2020) — the positional encoding trick that makes this work at all
+- [Fourier Features](https://github.com/tancik/fourier-feature-networks) (Tancik et al., 2020) — the positional encoding trick that makes this work at all
 
 ## License
 
