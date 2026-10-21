@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lgit — interactive demo</title>
+<meta name="description" content="Train a neural network to memorize your code or an image. Watch it try to remember.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,700&family=Outfit:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #faf9f6;
+  --fg: #1a1a1a;
+  --muted: #5a5852;
+  --surface: #f0eeea;
+  --accent: #2d9d5a;
+  --error: #c53030;
+  --warn: #b8860b;
+  --info: #2563eb;
+  --border: #d8d5ce;
+  --code-bg: #1c1c1e;
+  --code-fg: #d4d4d4;
+  --code-muted: #6e7681;
+  --code-accent: #3fb950;
+  --code-error: #f85149;
+  --code-warn: #d29922;
+  --code-info: #58a6ff;
+  --tag-bg: #e8f5ed;
+  --tag-fg: #1a7a3a;
+  --font-serif: 'Newsreader', Georgia, serif;
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416;
+    --fg: #e4e2de;
+    --muted: #9a978e;
+    --surface: #1e1e21;
+    --accent: #3fb950;
+    --error: #f85149;
+    --warn: #d29922;
+    --info: #79c0ff;
+    --border: #2e2d2a;
+    --code-bg: #0d0d0f;
+    --tag-bg: #1a2e1f;
+    --tag-fg: #5cc472;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416;
+  --fg: #e4e2de;
+  --muted: #9a978e;
+  --surface: #1e1e21;
+  --accent: #3fb950;
+  --error: #f85149;
+  --warn: #d29922;
+  --info: #79c0ff;
+  --border: #2e2d2a;
+  --code-bg: #0d0d0f;
+  --tag-bg: #1a2e1f;
+  --tag-fg: #5cc472;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  line-height: 1.7;
+  padding-inline: 20px;
+  margin: 0;
+}
+
+.container {
+  max-width: 680px;
+  margin: 0 auto;
+  padding-block: 48px 80px;
+}
+
+h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 5vw, 2.8rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0 0 8px;
+}
+h1 .accent { color: var(--accent); }
+h1 .dim { font-weight: 400; color: var(--muted); font-size: 0.65em; }
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: var(--tag-bg);
+  color: var(--tag-fg);
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  font-size: 1.05rem;
+  color: var(--muted);
+  margin: 0 0 32px;
+  line-height: 1.5;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+.mode-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 8px 24px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.02em;
+}
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.mode-btn:hover:not(.active) { color: var(--fg); }
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.byte-count { color: var(--info); text-transform: none; letter-spacing: 0; }
+
+.editor-wrap { margin-bottom: 20px; }
+#editor {
+  width: 100%;
+  min-height: 200px;
+  background: var(--code-bg);
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  color: var(--code-fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  tab-size: 4;
+}
+#editor:focus { box-shadow: 0 0 0 2px var(--accent); }
+
+.image-section { margin-bottom: 20px; }
+.image-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.canvas-wrap {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-align: center;
+  pointer-events: none;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.canvas-wrap.drag-over .canvas-empty { border-color: var(--accent); color: var(--accent); }
+.canvas-wrap.has-image .canvas-empty { display: none; }
+
+.sample-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.sample-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sample-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.controls { margin-bottom: 24px; }
+.commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.prompt { color: var(--accent); font-family: var(--font-mono); font-weight: 500; }
+.cmd { color: var(--fg); font-family: var(--font-mono); font-size: 0.88rem; }
+.msg-input {
+  flex: 1;
+  min-width: 120px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  outline: none;
+}
+.msg-input:focus { border-color: var(--accent); }
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: filter 0.15s;
+}
+.btn:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.cancel { background: var(--error); }
+.params {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.params label { display: flex; align-items: center; gap: 4px; }
+.params select, .params input[type=number] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  outline: none;
+}
+.params input[type=number] { width: 70px; }
+
+.terminal-wrap {
+  background: var(--code-bg);
+  border-radius: 10px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.terminal-dots {
+  display: flex;
+  gap: 6px;
+  padding: 12px 14px 0;
+}
+.terminal-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.terminal-dots span:nth-child(1) { background: #ff5f57; }
+.terminal-dots span:nth-child(2) { background: #ffbd2e; }
+.terminal-dots span:nth-child(3) { background: #28c840; }
+.terminal-body {
+  padding: 10px 14px 14px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--code-fg);
+}
+.term-line { white-space: pre-wrap; word-break: break-all; }
+.term-line.accent { color: var(--code-accent); }
+.term-line.muted { color: var(--code-muted); }
+.term-line.err { color: var(--code-error); }
+.term-line.warn { color: var(--code-warn); }
+.term-line.info { color: var(--code-info); }
+
+.progress-bar {
+  height: 3px;
+  background: #30363d;
+  border-radius: 2px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--code-accent);
+  border-radius: 2px;
+  transition: width 0.1s;
+}
+
+.diff-section { margin-bottom: 20px; }
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.badge.perfect { border-color: var(--accent); color: var(--accent); }
+.badge.good { border-color: var(--warn); color: var(--warn); }
+.badge.bad { border-color: var(--error); color: var(--error); }
+
+.diff-view {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--code-fg);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 60px;
+}
+.wrong {
+  color: var(--code-error);
+  background: rgba(248,81,73,0.15);
+  border-radius: 2px;
+  cursor: help;
+}
+
+.log-section { margin-bottom: 20px; }
+.log-entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.log-hash { color: var(--warn); }
+.log-msg { color: var(--fg); }
+.log-stats { color: var(--muted); }
+.log-acc { font-weight: 500; }
+.log-acc.perfect { color: var(--accent); }
+.log-acc.imperfect { color: var(--warn); }
+
+.run-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+}
+.run-btn:hover { border-color: var(--accent); }
+.output-panel {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--code-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.output-panel .out-label { color: var(--code-muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.output-panel .out-text { color: var(--code-fg); }
+.output-panel .out-err { color: var(--code-error); }
+
+.hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-top: 12px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+@media (max-width: 600px) {
+  .container { padding-block: 32px 60px; }
+  h1 { font-size: 1.6rem; }
+  #editor { font-size: 12px; min-height: 160px; }
+  .commit-row { gap: 6px; }
+  .msg-input { min-width: 80px; }
+  .params { gap: 8px; }
+  .image-grid { grid-template-columns: 1fr; }
+}
+</style>
+<!-- GA4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-BXL0V8163H"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-BXL0V8163H')</script>
+<!-- Umami -->
+<script defer src="https://stats.jeffyclassify.com/script.js" data-website-id="3d9aac34-2403-40fb-b10b-9f119072fccf" data-tag="lossy-git"></script>
+</head>
+<body>
+<div class="container">
+  <span class="tag">interactive demo</span>
+  <h1><span class="accent">lgit</span> <span class="dim">lossy git in the browser</span></h1>
+  <p class="subtitle">Version control where the storage is a neural network.
+  Commit code, it trains. Checkout, it reconstructs from memory. Sometimes perfectly. Sometimes not.</p>
+
+  <div class="mode-toggle">
+    <button class="mode-btn active" data-mode="image">image</button>
+    <button class="mode-btn" data-mode="text">text</button>
+  </div>
+
+  <div id="text-section" style="display:none">
+    <div class="editor-wrap">
+      <div class="section-label"><span>your code</span><span style="display:flex;gap:8px;align-items:center"><button class="run-btn" id="run-src">RUN ▶</button><span class="byte-count" id="byte-count"></span></span></div>
+      <textarea id="editor" spellcheck="false">function fizzbuzz(n) {
+  for (let i = 1; i <= n; i++) {
+    if (i % 15 === 0) console.log("FizzBuzz");
+    else if (i % 3 === 0) console.log("Fizz");
+    else if (i % 5 === 0) console.log("Buzz");
+    else console.log(i);
+  }
+}
+fizzbuzz(20);</textarea>
+      <div id="src-output" class="output-panel" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="image-section" class="image-section">
+    <div class="image-grid">
+      <div>
+        <div class="section-label"><span>source</span><span class="byte-count" id="pixel-count"></span></div>
+        <div class="canvas-wrap" id="src-wrap" tabindex="0" style="outline:none">
+          <canvas id="src-canvas" width="64" height="64"></canvas>
+          <div class="canvas-empty" id="src-empty">paste, drop, or upload<br>an image</div>
+        </div>
+      </div>
+      <div>
+        <div class="section-label"><span>reconstruction</span><span id="psnr-badge" class="badge" style="display:none"></span></div>
+        <div class="canvas-wrap">
+          <canvas id="rec-canvas" width="64" height="64"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="sample-row">
+      <span>samples:</span>
+      <button class="sample-btn" data-sample="gradient">gradient</button>
+      <button class="sample-btn" data-sample="smiley">smiley</button>
+      <button class="sample-btn" data-sample="mondrian">mondrian</button>
+      <span>or</span>
+      <button class="sample-btn" id="upload-btn">upload</button>
+      <span>/ ctrl+v</span>
+      <input type="file" id="file-input" accept="image/*" style="display:none">
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="commit-row">
+      <span class="prompt">$</span>
+      <span class="cmd">lgit commit -m</span>
+      <input type="text" id="msg" value="first commit" class="msg-input">
+      <button id="commit-btn" class="btn">COMMIT</button>
+    </div>
+    <div class="params">
+      <label>--hidden <select id="sel-hidden">
+        <option value="16">16</option>
+        <option value="24">24</option>
+        <option value="32">32</option>
+        <option value="48" selected>48</option>
+        <option value="64">64</option>
+        <option value="96">96</option>
+        <option value="128">128</option>
+      </select></label>
+      <label>--layers <select id="sel-layers">
+        <option value="1">1</option>
+        <option value="2" selected>2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select></label>
+      <label>--epochs <input type="number" id="sel-epochs" value="500" min="100" max="10000" step="100"></label>
+    </div>
+  </div>
+
+  <div id="terminal-wrap" class="terminal-wrap" style="display:none">
+    <div class="terminal-dots"><span></span><span></span><span></span></div>
+    <div id="terminal" class="terminal-body"></div>
+  </div>
+  <div id="diff-section" class="diff-section" style="display:none">
+    <div class="section-label"><span>neural reconstruction</span><span style="display:flex;gap:8px;align-items:center"><button class="run-btn" id="run-recon">RUN ▶</button><span id="badge" class="badge"></span></span></div>
+    <pre id="diff-view" class="diff-view"></pre>
+    <div id="recon-output" class="output-panel" style="display:none"></div>
+  </div>
+  <div id="log-section" class="log-section" style="display:none">
+    <div class="section-label">commit log</div>
+    <div id="log"></div>
+  </div>
+
+  <p class="hint">
+    Smaller network = more errors = more fun. Try --hidden 16 on text, or paste your own image.
+    <br><a href="https://github.com/nicobrenner/lossy-git">CLI version</a> · <a href="./">Full writeup</a>
+  </p>
+</div>
+
+<script>
+// ============================================================
+// Neural network in pure JavaScript — no dependencies
+// ============================================================
+
+let _spare = null;
+function randn() {
+  if (_spare !== null) { const v = _spare; _spare = null; return v; }
+  let u, v, s;
+  do { u = Math.random() * 2 - 1; v = Math.random() * 2 - 1; s = u*u + v*v; }
+  while (s >= 1 || s === 0);
+  const m = Math.sqrt(-2 * Math.log(s) / s);
+  _spare = v * m;
+  return u * m;
+}
+
+function mmBias(A, M, K, W, N, b, C) {
+  for (let i = 0; i < M; i++) {
+    const iK = i*K, iN = i*N;
+    for (let j = 0; j < N; j++) C[iN+j] = b[j];
+    for (let k = 0; k < K; k++) {
+      const a = A[iK+k], kN = k*N;
+      for (let j = 0; j < N; j++) C[iN+j] += a * W[kN+j];
+    }
+  }
+}
+
+function mmTA(A, M, K, B, N, C) {
+  C.fill(0);
+  for (let m = 0; m < M; m++) {
+    const mK = m*K, mN = m*N;
+    for (let k = 0; k < K; k++) {
+      const a = A[mK+k], kN = k*N;
+      for (let n = 0; n < N; n++) C[kN+n] += a * B[mN+n];
+    }
+  }
+}
+
+function mmTB(A, M, K, B, N, C) {
+  for (let m = 0; m < M; m++) {
+    const mK = m*K, mN = m*N;
+    for (let n = 0; n < N; n++) {
+      const nK = n*K;
+      let s = 0;
+      for (let k = 0; k < K; k++) s += A[mK+k] * B[nK+k];
+      C[mN+n] = s;
+    }
+  }
+}
+
+function fourierFeatures(N, numFreqs) {
+  const dim = numFreqs * 2;
+  const X = new Float32Array(N * dim);
+  for (let i = 0; i < N; i++) {
+    const pos = N > 1 ? i / (N - 1) : 0;
+    const off = i * dim;
+    for (let f = 0; f < numFreqs; f++) {
+      const angle = pos * Math.pow(2, f) * Math.PI;
+      X[off + f] = Math.sin(angle);
+      X[off + numFreqs + f] = Math.cos(angle);
+    }
+  }
+  return X;
+}
+
+function fourierFeatures2D(W, H, numFreqs) {
+  const dim = numFreqs * 4;
+  const N = W * H;
+  const X = new Float32Array(N * dim);
+  for (let y = 0; y < H; y++) {
+    const ny = H > 1 ? y / (H - 1) : 0;
+    for (let x = 0; x < W; x++) {
+      const nx = W > 1 ? x / (W - 1) : 0;
+      const off = (y * W + x) * dim;
+      for (let f = 0; f < numFreqs; f++) {
+        const scale = Math.pow(2, f) * Math.PI;
+        X[off + f * 4]     = Math.sin(nx * scale);
+        X[off + f * 4 + 1] = Math.cos(nx * scale);
+        X[off + f * 4 + 2] = Math.sin(ny * scale);
+        X[off + f * 4 + 3] = Math.cos(ny * scale);
+      }
+    }
+  }
+  return X;
+}
+
+function createModel(inputDim, hiddenDim, numLayers, outputDim) {
+  const layers = [];
+  let prev = inputDim;
+  const total = numLayers + 1;
+  for (let l = 0; l < total; l++) {
+    const out = l < numLayers ? hiddenDim : outputDim;
+    const scale = Math.sqrt(2.0 / prev);
+    const W = new Float32Array(prev * out);
+    for (let i = 0; i < W.length; i++) W[i] = randn() * scale;
+    const b = new Float32Array(out);
+    layers.push({
+      W, b, inDim: prev, outDim: out,
+      mW: new Float32Array(W.length), vW: new Float32Array(W.length),
+      mb: new Float32Array(b.length), vb: new Float32Array(b.length),
+      dW: new Float32Array(W.length), db: new Float32Array(b.length),
+    });
+    prev = out;
+  }
+  const params = layers.reduce((s, l) => s + l.W.length + l.b.length, 0);
+  return { layers, numLayers, params };
+}
+
+function createBuffers(N, model, outputDim) {
+  const acts = [null];
+  for (let l = 0; l < model.numLayers; l++) acts.push(new Float32Array(N * model.layers[l].outDim));
+  acts.push(new Float32Array(N * outputDim));
+  const maxDim = Math.max(outputDim, ...model.layers.map(l => Math.max(l.inDim, l.outDim)));
+  return {
+    acts,
+    dH1: new Float32Array(N * maxDim),
+    dH2: new Float32Array(N * maxDim),
+    probs: new Float32Array(N * outputDim),
+  };
+}
+
+function trainStepText(model, X, targets, N, bufs) {
+  const { layers, numLayers } = model;
+  const nL = layers.length;
+  const { acts, dH1, dH2, probs } = bufs;
+  acts[0] = X;
+
+  for (let l = 0; l < nL; l++) {
+    const { W, b, inDim, outDim } = layers[l];
+    mmBias(acts[l], N, inDim, W, outDim, b, acts[l+1]);
+    if (l < nL - 1) {
+      const h = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (h[i] < 0) h[i] = 0;
+    }
+  }
+
+  const logits = acts[nL];
+  let loss = 0, correct = 0;
+  for (let i = 0; i < N; i++) {
+    const off = i * 256;
+    let mx = -1e30;
+    for (let j = 0; j < 256; j++) if (logits[off+j] > mx) mx = logits[off+j];
+    let se = 0;
+    for (let j = 0; j < 256; j++) { probs[off+j] = Math.exp(logits[off+j] - mx); se += probs[off+j]; }
+    let mp = 0, mi = 0;
+    for (let j = 0; j < 256; j++) {
+      probs[off+j] /= se;
+      if (probs[off+j] > mp) { mp = probs[off+j]; mi = j; }
+    }
+    loss -= Math.log(probs[off + targets[i]] + 1e-10);
+    if (mi === targets[i]) correct++;
+  }
+
+  let dH = dH1, dHn = dH2;
+  for (let i = 0, len = N*256; i < len; i++) dH[i] = probs[i];
+  for (let i = 0; i < N; i++) dH[i*256 + targets[i]] -= 1;
+  const invN = 1/N;
+  for (let i = 0, len = N*256; i < len; i++) dH[i] *= invN;
+
+  for (let l = nL-1; l >= 0; l--) {
+    const { W, dW, db, inDim, outDim } = layers[l];
+    if (l < nL-1) {
+      const act = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (act[i] <= 0) dH[i] = 0;
+    }
+    dW.fill(0);
+    mmTA(acts[l], N, inDim, dH, outDim, dW);
+    db.fill(0);
+    for (let i = 0; i < N; i++) {
+      const off = i*outDim;
+      for (let j = 0; j < outDim; j++) db[j] += dH[off+j];
+    }
+    if (l > 0) {
+      mmTB(dH, N, outDim, W, inDim, dHn);
+      const t = dH; dH = dHn; dHn = t;
+    }
+  }
+
+  return { loss: loss/N, accuracy: correct/N*100 };
+}
+
+function trainStepImage(model, X, targets, N, bufs) {
+  const { layers, numLayers } = model;
+  const nL = layers.length;
+  const { acts, dH1, dH2, probs } = bufs;
+  acts[0] = X;
+
+  for (let l = 0; l < nL; l++) {
+    const { W, b, inDim, outDim } = layers[l];
+    mmBias(acts[l], N, inDim, W, outDim, b, acts[l+1]);
+    if (l < nL - 1) {
+      const h = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (h[i] < 0) h[i] = 0;
+    }
+  }
+
+  const logits = acts[nL];
+  const len3 = N * 3;
+  for (let i = 0; i < len3; i++) {
+    probs[i] = 1 / (1 + Math.exp(-logits[i]));
+  }
+
+  let loss = 0;
+  for (let i = 0; i < len3; i++) {
+    const d = probs[i] - targets[i];
+    loss += d * d;
+  }
+  loss /= len3;
+
+  let dH = dH1, dHn = dH2;
+  const scale = 2 / len3;
+  for (let i = 0; i < len3; i++) {
+    const p = probs[i];
+    dH[i] = scale * (p - targets[i]) * p * (1 - p);
+  }
+
+  for (let l = nL-1; l >= 0; l--) {
+    const { W, dW, db, inDim, outDim } = layers[l];
+    if (l < nL-1) {
+      const act = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (act[i] <= 0) dH[i] = 0;
+    }
+    dW.fill(0);
+    mmTA(acts[l], N, inDim, dH, outDim, dW);
+    db.fill(0);
+    for (let i = 0; i < N; i++) {
+      const off = i*outDim;
+      for (let j = 0; j < outDim; j++) db[j] += dH[off+j];
+    }
+    if (l > 0) {
+      mmTB(dH, N, outDim, W, inDim, dHn);
+      const t = dH; dH = dHn; dHn = t;
+    }
+  }
+
+  const psnr = loss > 1e-10 ? -10 * Math.log10(loss) : 60;
+  return { loss, psnr };
+}
+
+function adamStep(model, t, lr) {
+  const b1 = 0.9, b2 = 0.999, eps = 1e-8;
+  const bc1 = 1 - Math.pow(b1, t);
+  const bc2 = 1 - Math.pow(b2, t);
+  for (const l of model.layers) {
+    adamArr(l.W, l.dW, l.mW, l.vW, lr, b1, b2, eps, bc1, bc2);
+    adamArr(l.b, l.db, l.mb, l.vb, lr, b1, b2, eps, bc1, bc2);
+  }
+}
+
+function adamArr(p, g, m, v, lr, b1, b2, eps, bc1, bc2) {
+  for (let i = 0; i < p.length; i++) {
+    m[i] = b1*m[i] + (1-b1)*g[i];
+    v[i] = b2*v[i] + (1-b2)*g[i]*g[i];
+    p[i] -= lr * (m[i]/bc1) / (Math.sqrt(v[i]/bc2) + eps);
+  }
+}
+
+function predictText(model, X, N, bufs) {
+  const { layers } = model;
+  const nL = layers.length;
+  const { acts } = bufs;
+  acts[0] = X;
+  for (let l = 0; l < nL; l++) {
+    const { W, b, inDim, outDim } = layers[l];
+    mmBias(acts[l], N, inDim, W, outDim, b, acts[l+1]);
+    if (l < nL-1) {
+      const h = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (h[i] < 0) h[i] = 0;
+    }
+  }
+  const logits = acts[nL];
+  const pred = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const off = i*256;
+    let mx = logits[off], mi = 0;
+    for (let j = 1; j < 256; j++) if (logits[off+j] > mx) { mx = logits[off+j]; mi = j; }
+    pred[i] = mi;
+  }
+  return pred;
+}
+
+function predictImage(model, X, N, bufs) {
+  const { layers } = model;
+  const nL = layers.length;
+  const { acts } = bufs;
+  acts[0] = X;
+  for (let l = 0; l < nL; l++) {
+    const { W, b, inDim, outDim } = layers[l];
+    mmBias(acts[l], N, inDim, W, outDim, b, acts[l+1]);
+    if (l < nL-1) {
+      const h = acts[l+1];
+      for (let i = 0, len = N*outDim; i < len; i++) if (h[i] < 0) h[i] = 0;
+    }
+  }
+  const logits = acts[nL];
+  const preds = new Float32Array(N * 3);
+  for (let i = 0; i < N * 3; i++) {
+    preds[i] = 1 / (1 + Math.exp(-logits[i]));
+  }
+  return preds;
+}
+
+// ============================================================
+// Sample image generators
+// ============================================================
+
+function hslToRgb(h, s, l) {
+  h /= 360; s /= 100; l /= 100;
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1; if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
+
+function generateSample(name) {
+  const size = 32;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+
+  if (name === 'gradient') {
+    for (let x = 0; x < size; x++) {
+      for (let y = 0; y < size; y++) {
+        const hue = (x / size) * 300;
+        const lum = 30 + (y / size) * 40;
+        const [r,g,b] = hslToRgb(hue, 85, lum);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  } else if (name === 'smiley') {
+    ctx.fillStyle = '#2a4494';
+    ctx.fillRect(0, 0, size, size);
+    const cx = size/2, cy = size/2, r = size * 0.38;
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(cx - r*0.3, cy - r*0.2, r*0.12, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + r*0.3, cy - r*0.2, r*0.12, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy + r*0.05, r*0.35, 0.3, Math.PI - 0.3); ctx.stroke();
+  } else if (name === 'mondrian') {
+    ctx.fillStyle = '#f5f0e8';
+    ctx.fillRect(0, 0, size, size);
+    const rects = [
+      [0, 0, 14, 12, '#d92b2b'],
+      [16, 0, 16, 8, '#2851a4'],
+      [0, 14, 10, 18, '#f7d628'],
+      [16, 10, 16, 12, '#f5f0e8'],
+      [12, 14, 8, 8, '#f5f0e8'],
+      [12, 24, 20, 8, '#2851a4'],
+      [0, 14, 10, 10, '#f7d628'],
+    ];
+    for (const [x, y, w, h, fill] of rects) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+    const lines = [[15, 0, 15, 32], [0, 13, 32, 13], [11, 13, 11, 32],
+                   [0, 23, 11, 23], [15, 9, 32, 9], [15, 23, 32, 23]];
+    for (const [x1, y1, x2, y2] of lines) {
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+  }
+  return ctx.getImageData(0, 0, size, size);
+}
+
+// ============================================================
+// UI
+// ============================================================
+
+const $ = id => document.getElementById(id);
+const editor = $('editor');
+const terminal = $('terminal');
+const terminalWrap = $('terminal-wrap');
+const diffSection = $('diff-section');
+const diffView = $('diff-view');
+const badge = $('badge');
+const logSection = $('log-section');
+const logEl = $('log');
+const commitBtn = $('commit-btn');
+const byteCount = $('byte-count');
+const srcCanvas = $('src-canvas');
+const recCanvas = $('rec-canvas');
+const srcWrap = $('src-wrap');
+const srcEmpty = $('src-empty');
+const pixelCount = $('pixel-count');
+const psnrBadge = $('psnr-badge');
+
+let mode = 'image';
+let training = false;
+let cancelTraining = false;
+let imgData = null;
+let imgW = 0, imgH = 0;
+let imgTargets = null;
+
+// ---- Mode switching ----
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (training) return;
+    const newMode = btn.dataset.mode;
+    if (newMode === mode) return;
+    mode = newMode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    $('text-section').style.display = mode === 'text' ? '' : 'none';
+    $('image-section').style.display = mode === 'image' ? '' : 'none';
+    diffSection.style.display = 'none';
+    terminalWrap.style.display = 'none';
+    if (mode === 'image') {
+      $('sel-hidden').value = '48';
+      $('sel-layers').value = '2';
+      $('sel-epochs').value = '500';
+      setTimeout(focusPasteCatcher, 50);
+    } else {
+      $('sel-hidden').value = '24';
+      $('sel-layers').value = '2';
+      $('sel-epochs').value = '1000';
+    }
+  });
+});
+
+// ---- Text mode ----
+
+function updateByteCount() {
+  const n = new TextEncoder().encode(editor.value).length;
+  byteCount.textContent = n + ' bytes';
+}
+editor.addEventListener('input', updateByteCount);
+updateByteCount();
+
+editor.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const s = editor.selectionStart;
+    editor.value = editor.value.substring(0, s) + '    ' + editor.value.substring(editor.selectionEnd);
+    editor.selectionStart = editor.selectionEnd = s + 4;
+    updateByteCount();
+  }
+});
+
+// ---- Image mode ----
+
+const MAX_IMG = 128;
+
+function processImage(img) {
+  let w = img.naturalWidth || img.width;
+  let h = img.naturalHeight || img.height;
+  if (w > MAX_IMG || h > MAX_IMG) {
+    const s = MAX_IMG / Math.max(w, h);
+    w = Math.round(w * s);
+    h = Math.round(h * s);
+  }
+  w = Math.max(4, w);
+  h = Math.max(4, h);
+  const tc = document.createElement('canvas');
+  tc.width = w; tc.height = h;
+  const ctx = tc.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  return { data: ctx.getImageData(0, 0, w, h), w, h };
+}
+
+function setImage(imageData, w, h) {
+  imgData = imageData;
+  imgW = w;
+  imgH = h;
+
+  srcCanvas.width = w; srcCanvas.height = h;
+  srcCanvas.getContext('2d').putImageData(imageData, 0, 0);
+  srcWrap.classList.add('has-image');
+
+  recCanvas.width = w; recCanvas.height = h;
+  const rctx = recCanvas.getContext('2d');
+  rctx.fillStyle = '#1c1c1e';
+  rctx.fillRect(0, 0, w, h);
+  psnrBadge.style.display = 'none';
+
+  imgTargets = new Float32Array(w * h * 3);
+  for (let i = 0, n = w * h; i < n; i++) {
+    imgTargets[i*3]     = imageData.data[i*4]     / 255;
+    imgTargets[i*3 + 1] = imageData.data[i*4 + 1] / 255;
+    imgTargets[i*3 + 2] = imageData.data[i*4 + 2] / 255;
+  }
+
+  pixelCount.textContent = w + '×' + h + ' · ' + (w*h) + ' px';
+}
+
+function loadImageFile(file) {
+  const img = new Image();
+  img.onload = () => {
+    const { data, w, h } = processImage(img);
+    setImage(data, w, h);
+    URL.revokeObjectURL(img.src);
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+document.querySelectorAll('.sample-btn[data-sample]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const data = generateSample(btn.dataset.sample);
+    setImage(data, data.width, data.height);
+  });
+});
+
+$('upload-btn').addEventListener('click', () => $('file-input').click());
+$('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadImageFile(e.target.files[0]);
+  e.target.value = '';
+});
+
+const pasteCatcher = document.createElement('textarea');
+pasteCatcher.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;width:1px;height:1px';
+pasteCatcher.setAttribute('aria-hidden', 'true');
+document.body.appendChild(pasteCatcher);
+
+function focusPasteCatcher() {
+  if (mode === 'image' && !training && document.activeElement !== editor) {
+    pasteCatcher.focus();
+  }
+}
+
+srcWrap.addEventListener('click', focusPasteCatcher);
+document.addEventListener('click', e => {
+  if (mode === 'image' && !e.target.closest('input,select,textarea,button,.editor-wrap')) {
+    setTimeout(focusPasteCatcher, 0);
+  }
+});
+
+function handlePaste(e) {
+  if (mode !== 'image') return;
+  const cd = e.clipboardData;
+  if (!cd) return;
+  if (cd.files && cd.files.length > 0) {
+    for (const file of cd.files) {
+      if (file.type.startsWith('image/')) {
+        e.preventDefault();
+        loadImageFile(file);
+        return;
+      }
+    }
+  }
+  if (cd.items) {
+    for (const item of cd.items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        loadImageFile(item.getAsFile());
+        return;
+      }
+    }
+  }
+}
+
+document.addEventListener('paste', handlePaste);
+pasteCatcher.addEventListener('paste', handlePaste);
+
+srcWrap.addEventListener('dragover', e => { e.preventDefault(); srcWrap.classList.add('drag-over'); });
+srcWrap.addEventListener('dragleave', () => srcWrap.classList.remove('drag-over'));
+srcWrap.addEventListener('drop', e => {
+  e.preventDefault();
+  srcWrap.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadImageFile(file);
+});
+
+function renderReconstruction(preds, w, h) {
+  const ctx = recCanvas.getContext('2d');
+  const id = ctx.createImageData(w, h);
+  const d = id.data;
+  for (let i = 0, n = w * h; i < n; i++) {
+    d[i*4]     = Math.max(0, Math.min(255, preds[i*3]     * 255 + 0.5 | 0));
+    d[i*4 + 1] = Math.max(0, Math.min(255, preds[i*3 + 1] * 255 + 0.5 | 0));
+    d[i*4 + 2] = Math.max(0, Math.min(255, preds[i*3 + 2] * 255 + 0.5 | 0));
+    d[i*4 + 3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+function computePSNR(preds, targets, N) {
+  let mse = 0;
+  for (let i = 0; i < N * 3; i++) {
+    const d = preds[i] - targets[i];
+    mse += d * d;
+  }
+  mse /= (N * 3);
+  return mse > 1e-10 ? -10 * Math.log10(mse) : 60;
+}
+
+// ---- Shared UI ----
+
+function termLine(text, cls) {
+  const d = document.createElement('div');
+  d.className = 'term-line' + (cls ? ' ' + cls : '');
+  d.textContent = text;
+  terminal.appendChild(d);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function termProgress(pct) {
+  let bar = terminal.querySelector('.progress-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'progress-bar';
+    bar.innerHTML = '<div class="progress-fill"></div>';
+    terminal.appendChild(bar);
+  }
+  bar.querySelector('.progress-fill').style.width = pct + '%';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderChar(byte) {
+  if (byte === 10) return '\n';
+  if (byte === 13) return '';
+  if (byte === 9) return '    ';
+  if (byte < 32 || byte === 127) return '·';
+  return String.fromCharCode(byte);
+}
+
+function renderDiff(predicted, original) {
+  let html = '';
+  let correct = 0;
+  for (let i = 0; i < original.length; i++) {
+    const pc = renderChar(predicted[i]);
+    const oc = renderChar(original[i]);
+    if (predicted[i] === original[i]) {
+      html += escHtml(pc);
+      correct++;
+    } else {
+      const title = 'expected: ' + (original[i] >= 32 && original[i] < 127 ? String.fromCharCode(original[i]) : '0x' + original[i].toString(16));
+      html += '<span class="wrong" title="' + escHtml(title) + '">' + escHtml(pc) + '</span>';
+    }
+  }
+  const acc = correct / original.length * 100;
+  diffView.innerHTML = html;
+  badge.textContent = acc.toFixed(1) + '%';
+  badge.className = 'badge ' + (acc >= 100 ? 'perfect' : acc >= 90 ? 'good' : 'bad');
+}
+
+function addLogEntry(info) {
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  const modelKB = (info.params * 4 / 1024).toFixed(1);
+  const ratio = Math.round(info.params * 4 / info.dataBytes);
+
+  let statsHtml;
+  if (info.isImage) {
+    const cls = info.psnr > 35 ? 'perfect' : 'imperfect';
+    statsHtml = info.imgW + '×' + info.imgH + ' image | ' +
+      '<span class="log-acc ' + cls + '">' + info.psnr.toFixed(1) + ' dB</span> | ' +
+      info.params.toLocaleString() + ' params (~' + modelKB + ' KB) | ' +
+      ratio + 'x expansion | ' + info.elapsed.toFixed(1) + 's';
+  } else {
+    const cls = info.accuracy >= 100 ? 'perfect' : 'imperfect';
+    statsHtml = info.dataBytes + ' bytes | ' +
+      '<span class="log-acc ' + cls + '">' + info.accuracy.toFixed(1) + '% recall</span> | ' +
+      info.params.toLocaleString() + ' params (~' + modelKB + ' KB) | ' +
+      ratio + 'x expansion | ' + info.elapsed.toFixed(1) + 's';
+  }
+
+  div.innerHTML =
+    '<span class="log-hash">[' + info.hash + ']</span> ' +
+    '<span class="log-msg">' + escHtml(info.message) + '</span><br>' +
+    '<span class="log-stats">' + statsHtml + '</span>';
+  logEl.insertBefore(div, logEl.firstChild);
+  logSection.style.display = '';
+}
+
+function commitHash() {
+  const h = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < 8; i++) s += h[Math.floor(Math.random()*16)];
+  return s;
+}
+
+// ---- Commit handlers ----
+
+async function commitText() {
+  const text = editor.value;
+  if (!text) return;
+
+  const bytes = new TextEncoder().encode(text);
+  const N = bytes.length;
+  if (N > 5000) { alert('Max 5000 bytes for the browser demo'); return; }
+
+  const hiddenDim = parseInt($('sel-hidden').value);
+  const numLayers = parseInt($('sel-layers').value);
+  const epochs = parseInt($('sel-epochs').value);
+  const message = $('msg').value || '(no message)';
+
+  training = true;
+  cancelTraining = false;
+  commitBtn.textContent = 'CANCEL';
+  commitBtn.classList.add('cancel');
+  editor.disabled = true;
+
+  terminal.innerHTML = '';
+  terminalWrap.style.display = '';
+  diffSection.style.display = '';
+
+  const NUM_FREQS = 64;
+  const inputDim = NUM_FREQS * 2;
+  const targets = new Int32Array(bytes);
+  const X = fourierFeatures(N, NUM_FREQS);
+  const model = createModel(inputDim, hiddenDim, numLayers, 256);
+  const bufs = createBuffers(N, model, 256);
+
+  termLine('Training neural network on 1 file(s)...', 'accent');
+  termLine('  ' + N + ' bytes to memorize');
+  termLine('  Network: ' + numLayers + ' layer' + (numLayers > 1 ? 's' : '') +
+           ', ' + hiddenDim + ' hidden units, ' + model.params.toLocaleString() + ' parameters');
+
+  const baseLR = 1e-3;
+  const batchSize = Math.max(1, Math.min(20, Math.floor(500000 / (N * 256))));
+  const updateDiffEvery = Math.max(1, Math.floor(epochs / 20));
+  const logEvery = Math.max(1, Math.floor(epochs / 10));
+  const start = performance.now();
+
+  let lastAcc = 0;
+  const predicted = new Uint8Array(N);
+
+  for (let epoch = 1; epoch <= epochs; epoch++) {
+    const lr = baseLR * 0.5 * (1 + Math.cos(Math.PI * epoch / epochs));
+    const res = trainStepText(model, X, targets, N, bufs);
+    adamStep(model, epoch, lr);
+    lastAcc = res.accuracy;
+
+    if (epoch % batchSize === 0 || epoch === epochs || res.accuracy >= 100) {
+      if (epoch % logEvery === 0 || epoch === epochs || res.accuracy >= 100) {
+        const last = terminal.querySelector('.term-progress');
+        if (last) last.remove();
+        const d = document.createElement('div');
+        d.className = 'term-line term-progress';
+        d.textContent = '  epoch ' + epoch.toString().padStart(String(epochs).length) +
+                         '/' + epochs + '  loss=' + res.loss.toFixed(4) +
+                         '  accuracy=' + res.accuracy.toFixed(1) + '%';
+        terminal.appendChild(d);
+      }
+
+      termProgress(epoch / epochs * 100);
+
+      if (epoch % updateDiffEvery === 0 || epoch === epochs || res.accuracy >= 100) {
+        const p = predictText(model, X, N, bufs);
+        predicted.set(p);
+        renderDiff(predicted, bytes);
+      }
+
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    if (cancelTraining) {
+      termLine('  Training cancelled.', 'err');
+      break;
+    }
+
+    if (res.accuracy >= 100 && epoch > 50) {
+      const p = predictText(model, X, N, bufs);
+      predicted.set(p);
+      renderDiff(predicted, bytes);
+      break;
+    }
+  }
+
+  const elapsed = (performance.now() - start) / 1000;
+  const p = predictText(model, X, N, bufs);
+  predicted.set(p);
+  lastReconBytes = new Uint8Array(predicted);
+  const acc = Array.from(predicted).reduce((s, b, i) => s + (b === bytes[i] ? 1 : 0), 0) / N * 100;
+  renderDiff(predicted, bytes);
+  $('recon-output').style.display = 'none';
+
+  termLine('  Training complete in ' + elapsed.toFixed(1) + 's', 'muted');
+  termLine('');
+  const hash = commitHash();
+  termLine('[' + hash + '] ' + message, 'accent');
+  termLine('  1 file(s), ' + N + ' bytes');
+  termLine('  Memorization: ' + acc.toFixed(1) + '%');
+  if (acc >= 100) {
+    termLine('  Perfect recall!', 'accent');
+  } else {
+    const wrong = N - Math.round(acc * N / 100);
+    termLine('  ' + wrong + ' byte' + (wrong !== 1 ? 's' : '') + ' hallucinated by the network', 'warn');
+  }
+
+  addLogEntry({ hash, message, accuracy: acc, params: model.params, dataBytes: N, elapsed });
+
+  training = false;
+  cancelTraining = false;
+  commitBtn.textContent = 'COMMIT';
+  commitBtn.classList.remove('cancel');
+  editor.disabled = false;
+}
+
+async function commitImage() {
+  if (!imgData) return;
+
+  const W = imgW, H = imgH;
+  const N = W * H;
+
+  const hiddenDim = parseInt($('sel-hidden').value);
+  const numLayers = parseInt($('sel-layers').value);
+  const epochs = parseInt($('sel-epochs').value);
+  const message = $('msg').value || '(no message)';
+
+  training = true;
+  cancelTraining = false;
+  commitBtn.textContent = 'CANCEL';
+  commitBtn.classList.add('cancel');
+
+  terminal.innerHTML = '';
+  terminalWrap.style.display = '';
+  diffSection.style.display = 'none';
+
+  const NUM_FREQS = 10;
+  const inputDim = NUM_FREQS * 4;
+  const X = fourierFeatures2D(W, H, NUM_FREQS);
+  const model = createModel(inputDim, hiddenDim, numLayers, 3);
+  const bufs = createBuffers(N, model, 3);
+
+  termLine('Training neural network on ' + W + '×' + H + ' image...', 'accent');
+  termLine('  ' + N + ' pixels to memorize');
+  termLine('  Network: ' + numLayers + ' layer' + (numLayers > 1 ? 's' : '') +
+           ', ' + hiddenDim + ' hidden units, ' + model.params.toLocaleString() + ' parameters');
+
+  const baseLR = 1e-3;
+  const MINI_BATCH = 4096;
+  const useMini = N > MINI_BATCH;
+  let mbX, mbT, mbBufs;
+  if (useMini) {
+    mbX = new Float32Array(MINI_BATCH * inputDim);
+    mbT = new Float32Array(MINI_BATCH * 3);
+    mbBufs = createBuffers(MINI_BATCH, model, 3);
+    termLine('  Mini-batch: ' + MINI_BATCH + ' pixels/step (image has ' + N + ')', 'muted');
+  }
+  const yieldEvery = Math.max(1, Math.min(20, Math.floor(500000 / ((useMini ? MINI_BATCH : N) * 3))));
+  const updateEvery = Math.max(1, Math.floor(epochs / 40));
+  const logEvery = Math.max(1, Math.floor(epochs / 10));
+  const start = performance.now();
+
+  for (let epoch = 1; epoch <= epochs; epoch++) {
+    const lr = baseLR * 0.5 * (1 + Math.cos(Math.PI * epoch / epochs));
+    let res;
+    if (useMini) {
+      for (let i = 0; i < MINI_BATCH; i++) {
+        const j = Math.floor(Math.random() * N);
+        const si = i * inputDim, sj = j * inputDim;
+        for (let k = 0; k < inputDim; k++) mbX[si + k] = X[sj + k];
+        mbT[i*3] = imgTargets[j*3]; mbT[i*3+1] = imgTargets[j*3+1]; mbT[i*3+2] = imgTargets[j*3+2];
+      }
+      res = trainStepImage(model, mbX, mbT, MINI_BATCH, mbBufs);
+    } else {
+      res = trainStepImage(model, X, imgTargets, N, bufs);
+    }
+    adamStep(model, epoch, lr);
+
+    if (epoch % yieldEvery === 0 || epoch === epochs) {
+      if (epoch % logEvery === 0 || epoch === epochs) {
+        const last = terminal.querySelector('.term-progress');
+        if (last) last.remove();
+        const d = document.createElement('div');
+        d.className = 'term-line term-progress';
+        d.textContent = '  epoch ' + epoch.toString().padStart(String(epochs).length) +
+                         '/' + epochs + '  loss=' + res.loss.toFixed(6) +
+                         '  PSNR=' + res.psnr.toFixed(1) + ' dB';
+        terminal.appendChild(d);
+      }
+
+      termProgress(epoch / epochs * 100);
+
+      if (epoch % updateEvery === 0 || epoch === epochs) {
+        const preds = predictImage(model, X, N, bufs);
+        renderReconstruction(preds, W, H);
+        psnrBadge.textContent = res.psnr.toFixed(1) + ' dB';
+        psnrBadge.className = 'badge ' + (res.psnr > 35 ? 'perfect' : res.psnr > 25 ? 'good' : 'bad');
+        psnrBadge.style.display = '';
+      }
+
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    if (cancelTraining) {
+      termLine('  Training cancelled.', 'err');
+      break;
+    }
+  }
+
+  const elapsed = (performance.now() - start) / 1000;
+  const preds = predictImage(model, X, N, bufs);
+  const psnr = computePSNR(preds, imgTargets, N);
+  renderReconstruction(preds, W, H);
+  psnrBadge.textContent = psnr.toFixed(1) + ' dB';
+  psnrBadge.className = 'badge ' + (psnr > 35 ? 'perfect' : psnr > 25 ? 'good' : 'bad');
+  psnrBadge.style.display = '';
+
+  termLine('  Training complete in ' + elapsed.toFixed(1) + 's', 'muted');
+  termLine('');
+  const hash = commitHash();
+  termLine('[' + hash + '] ' + message, 'accent');
+  termLine('  ' + W + '×' + H + ' image, ' + N + ' pixels');
+  termLine('  PSNR: ' + psnr.toFixed(1) + ' dB');
+  if (psnr > 35) {
+    termLine('  Near-perfect reconstruction!', 'accent');
+  } else if (psnr > 25) {
+    termLine('  Decent recall, some detail lost', 'warn');
+  } else {
+    termLine('  Heavy compression artifacts', 'warn');
+  }
+
+  addLogEntry({ hash, message, psnr, params: model.params, dataBytes: N * 3, elapsed, isImage: true, imgW: W, imgH: H });
+
+  training = false;
+  cancelTraining = false;
+  commitBtn.textContent = 'COMMIT';
+  commitBtn.classList.remove('cancel');
+}
+
+commitBtn.addEventListener('click', () => {
+  if (training) { cancelTraining = true; return; }
+  if (mode === 'text') commitText();
+  else commitImage();
+});
+
+// ---- JS code execution ----
+
+let lastReconBytes = null;
+
+function runJS(code) {
+  const logs = [];
+  const fakeConsole = {
+    log: (...a) => logs.push(a.map(v => typeof v === 'object' ? JSON.stringify(v) : String(v)).join(' ')),
+    warn: (...a) => logs.push(a.map(String).join(' ')),
+    error: (...a) => logs.push('ERROR: ' + a.map(String).join(' ')),
+  };
+  try {
+    const fn = new Function('console', code);
+    fn(fakeConsole);
+    return { output: logs.join('\n'), error: null };
+  } catch (e) {
+    return { output: logs.join('\n'), error: e.toString() };
+  }
+}
+
+function showOutput(panelId, label, result) {
+  const panel = $(panelId);
+  let html = '<div class="out-label">' + escHtml(label) + '</div>';
+  if (result.output) html += '<div class="out-text">' + escHtml(result.output) + '</div>';
+  if (result.error) html += '<div class="out-err">' + escHtml(result.error) + '</div>';
+  if (!result.output && !result.error) html += '<div class="out-text" style="color:var(--code-muted)">(no output)</div>';
+  panel.innerHTML = html;
+  panel.style.display = '';
+}
+
+$('run-src').addEventListener('click', () => {
+  showOutput('src-output', 'output', runJS(editor.value));
+});
+
+$('run-recon').addEventListener('click', () => {
+  if (!lastReconBytes) return;
+  const code = new TextDecoder().decode(lastReconBytes);
+  showOutput('recon-output', 'reconstruction output', runJS(code));
+  showOutput('src-output', 'original output', runJS(editor.value));
+});
+
+// ---- Auto-load smiley for image mode ----
+const defaultSample = generateSample('smiley');
+setImage(defaultSample, defaultSample.width, defaultSample.height);
+setTimeout(focusPasteCatcher, 100);
+</script>
+</body>
+</html>
