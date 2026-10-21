@@ -482,7 +482,7 @@ fizzbuzz(20);</textarea>
     <div class="image-grid">
       <div>
         <div class="section-label"><span>source</span><span class="byte-count" id="pixel-count"></span></div>
-        <div class="canvas-wrap" id="src-wrap" tabindex="0" style="outline:none">
+        <div class="canvas-wrap" id="src-wrap">
           <canvas id="src-canvas" width="64" height="64"></canvas>
           <div class="canvas-empty" id="src-empty">paste, drop, or upload<br>an image</div>
         </div>
@@ -1079,22 +1079,18 @@ $('file-input').addEventListener('change', e => {
 });
 
 const pasteCatcher = document.createElement('textarea');
-pasteCatcher.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;width:1px;height:1px';
+pasteCatcher.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;overflow:hidden';
 pasteCatcher.setAttribute('aria-hidden', 'true');
+pasteCatcher.tabIndex = -1;
 document.body.appendChild(pasteCatcher);
 
 function focusPasteCatcher() {
   if (mode === 'image' && !training && document.activeElement !== editor) {
-    pasteCatcher.focus();
+    pasteCatcher.focus({ preventScroll: true });
   }
 }
 
 srcWrap.addEventListener('click', focusPasteCatcher);
-document.addEventListener('click', e => {
-  if (mode === 'image' && !e.target.closest('input,select,textarea,button,.editor-wrap')) {
-    setTimeout(focusPasteCatcher, 0);
-  }
-});
 
 function handlePaste(e) {
   if (mode !== 'image') return;
