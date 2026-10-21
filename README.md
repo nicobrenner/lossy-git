@@ -119,7 +119,7 @@ git gives you a hash. lgit gives you an accuracy percentage and a parameter coun
 
 ## Links
 
-- [Full writeup](https://jeffyclassify.com/blog/lgit/) — deep dive with more examples and the Fourier feature trick explained
+- [Full writeup](https://nicobrenner.github.io/lossy-git/) — deep dive with more examples and the Fourier feature trick explained
 - [r/ProgrammerHumor discussion](https://www.reddit.com/r/ProgrammerHumor/comments/1x6a2oi/gitbutlossy/) — "git but lossy"
 
 ## Prior art
