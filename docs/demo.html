@@ -75,7 +75,7 @@ body {
   margin: 0;
 }
 
-.container {
+.wrapper {
   max-width: 680px;
   margin: 0 auto;
   padding-block: 48px 80px;
@@ -88,30 +88,40 @@ h1 {
   line-height: 1.15;
   letter-spacing: -0.02em;
   text-wrap: balance;
-  margin: 0 0 8px;
+  margin: 0 0 12px;
 }
-h1 .accent { color: var(--accent); }
-h1 .dim { font-weight: 400; color: var(--muted); font-size: 0.65em; }
 
-.tag {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 500;
-  background: var(--tag-bg);
-  color: var(--tag-fg);
-  padding: 3px 10px;
-  border-radius: 4px;
-  margin-bottom: 16px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.dateline {
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 28px;
+}
+.dateline a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.dateline a:hover {
+  text-decoration: underline;
 }
 
 .subtitle {
-  font-size: 1.05rem;
+  font-size: 1.15rem;
   color: var(--muted);
   margin: 0 0 32px;
   line-height: 1.5;
+}
+
+h2 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 48px 0 16px;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0 0 16px;
 }
 
 .mode-toggle {
@@ -427,9 +437,24 @@ h1 .dim { font-weight: 400; color: var(--muted); font-size: 0.65em; }
   color: var(--muted);
   font-size: 0.88rem;
   margin-top: 12px;
+  line-height: 1.6;
+}
+.footer-links {
+  margin-top: 48px;
   padding-top: 24px;
   border-top: 1px solid var(--border);
-  line-height: 1.6;
+  font-size: 0.88rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.footer-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.footer-links a:hover {
+  text-decoration: underline;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -451,11 +476,10 @@ a:hover { text-decoration: underline; }
 <script defer src="https://stats.jeffyclassify.com/script.js" data-website-id="3d9aac34-2403-40fb-b10b-9f119072fccf" data-tag="lossy-git"></script>
 </head>
 <body>
-<div class="container">
-  <span class="tag">interactive demo</span>
-  <h1><span class="accent">lgit</span> <span class="dim">lossy git in the browser</span></h1>
-  <p class="subtitle">Version control where the storage is a neural network.
-  Commit code, it trains. Checkout, it reconstructs from memory. Sometimes perfectly. Sometimes not.</p>
+<div class="wrapper">
+  <h1>lgit: interactive demo</h1>
+  <div class="dateline">Oct 2026 · Nico Brenner · <a href="./">full writeup</a> · <a href="https://github.com/nicobrenner/lossy-git">code on GitHub</a></div>
+  <p class="subtitle">Version control where the storage is a neural network. Commit code, it trains. Checkout, it reconstructs from memory. Sometimes perfectly. Sometimes not</p>
 
   <div class="mode-toggle">
     <button class="mode-btn active" data-mode="image">image</button>
@@ -547,10 +571,21 @@ fizzbuzz(20);</textarea>
     <div id="log"></div>
   </div>
 
-  <p class="hint">
-    Smaller network = more errors = more fun. Try --hidden 16 on text, or paste your own image.
-    <br><a href="https://github.com/nicobrenner/lossy-git">CLI version</a> · <a href="./">Full writeup</a>
-  </p>
+  <p class="hint">Smaller network = more errors = more fun. Try --hidden 16 on text, or paste your own image</p>
+
+  <h2>How does it work?</h2>
+  <p>Instead of storing your files as bytes, lgit trains a small neural network to memorize them. Each commit is a training run: the network learns to map positional encodings to your data, byte by byte for code or pixel by pixel for images. Checkout is inference: the network reconstructs what it can from its weights</p>
+  <p>The network uses Fourier positional encoding, ReLU hidden layers, and an Adam optimizer. For text, it outputs a probability distribution over 256 byte values. For images, it predicts RGB values directly. A small network compresses aggressively and hallucinates. A larger one memorizes perfectly but defeats the point</p>
+  <p>And it all runs in your browser</p>
+  <p>The fun part is the failures. Run the JS code before and after a commit to see how neural corruption breaks your program in ways that are nothing like traditional file corruption</p>
+  <p>For the full story, math, and benchmarks: <a href="./">lgit: source control for the AI era</a></p>
+
+  <div class="footer-links">
+    <span>More projects:</span>
+    <a href="https://jeffyclassify.com">Jeffy</a>
+    <a href="https://nicobrenner.github.io/flock/">Flock</a>
+    <a href="https://github.com/nicobrenner">GitHub</a>
+  </div>
 </div>
 
 <script>
